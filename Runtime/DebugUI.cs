@@ -5,7 +5,6 @@ using System;
 using System.IO;
 using Newtonsoft.Json;
 
-
 namespace RuntimeDebugUI
 {
     #region Helper Classes
@@ -29,23 +28,19 @@ namespace RuntimeDebugUI
         {
             Slider,
             Toggle,
-            InfoDisplay
+            InfoDisplay,
+            Vector3
         }
 
         // Slider properties
         public float minValue;
         public float maxValue;
-        public float defaultValue;
-        public Func<float> getter;
-        public Action<float> setter;
+        public bool wholeNumbers = false;
 
-        // Toggle properties
-        public bool defaultBoolValue;
-        public Func<bool> boolGetter;
-        public Action<bool> boolSetter;
-
-        // Info display properties
-        public Func<string> stringGetter;
+        // All control type properties
+        public object defaultValue;
+        public Func<object> getter;
+        public Action<object> setter;
     }
     [Serializable]
     public class DebugTabConfig
@@ -68,6 +63,7 @@ namespace RuntimeDebugUI
         public string key;
         public float floatValue;
         public bool boolValue;
+        public object vecValue;
         public DebugControlConfig.ControlType type;
     }
     #endregion
@@ -172,6 +168,7 @@ namespace RuntimeDebugUI
         // Original values for reset functionality
         private Dictionary<string, float> originalValues = new Dictionary<string, float>();
         private Dictionary<string, bool> originalBoolValues = new Dictionary<string, bool>();
+        private Dictionary<string, object> originalVectorValues = new Dictionary<string, object>();
 
         // Smart serialization data
         private DebugUIData debugData = new DebugUIData();
@@ -599,14 +596,15 @@ namespace RuntimeDebugUI
                         case DebugControlConfig.ControlType.Slider:
                             if (control.getter != null)
                             {
-                                savedValue.floatValue = control.getter();
+                                if (control.wholeNumbers) savedValue.floatValue = (int)control.getter();
+                                else savedValue.floatValue = (float)Convert.ToDouble(control.getter());
                                 debugData.savedValues.Add(savedValue);
                             }
                             break;
                         case DebugControlConfig.ControlType.Toggle:
-                            if (control.boolGetter != null)
+                            if (control.getter != null)
                             {
-                                savedValue.boolValue = control.boolGetter();
+                                savedValue.boolValue = (bool)control.getter();
                                 debugData.savedValues.Add(savedValue);
                             }
                             break;
@@ -668,7 +666,7 @@ namespace RuntimeDebugUI
                                 control.setter?.Invoke(savedValue.floatValue);
                                 break;
                             case DebugControlConfig.ControlType.Toggle:
-                                control.boolSetter?.Invoke(savedValue.boolValue);
+                                control.setter?.Invoke(savedValue.boolValue);
                                 break;
                         }
                     }
@@ -1157,10 +1155,10 @@ namespace RuntimeDebugUI
                     tooltip = "This is an example boolean value",
                     type = DebugControlConfig.ControlType.Toggle,
                     sectionName = "Example Settings",
-                    defaultBoolValue = false,
+                    defaultValue = false,
                     saveValue = true, // This value will be saved/loaded
-                    boolGetter = () => false, // Replace with your actual getter
-                    boolSetter = (value) => { /* Replace with your actual setter */ }
+                    getter = () => false, // Replace with your actual getter
+                    setter = (value) => { /* Replace with your actual setter */ }
                 }
             });
 
@@ -1203,13 +1201,17 @@ namespace RuntimeDebugUI
                 switch (control.type)
                 {
                     case DebugControlConfig.ControlType.Slider:
-                        CreateSliderControl(scrollView, control);
+                        if (control.wholeNumbers) CreateSliderIntControl(scrollView, control);
+                        else CreateSliderControl(scrollView, control);
                         break;
                     case DebugControlConfig.ControlType.Toggle:
                         CreateToggleControl(scrollView, control);
                         break;
                     case DebugControlConfig.ControlType.InfoDisplay:
                         CreateInfoControl(scrollView, control);
+                        break;
+                    case DebugControlConfig.ControlType.Vector3:
+                        CreateVectorControl(scrollView, control);
                         break;
                 }
             }
@@ -1285,7 +1287,7 @@ namespace RuntimeDebugUI
             var slider = new Slider(config.minValue, config.maxValue);
             slider.AddToClassList("slider");
             slider.name = config.name;
-            slider.value = config.getter != null ? config.getter() : config.defaultValue;
+            slider.value = config.getter != null ? (float)Convert.ToDouble(config.getter()) : (float)config.defaultValue;
 
             var valueField = new FloatField();
             valueField.name = config.name + "Field";
@@ -1321,7 +1323,80 @@ namespace RuntimeDebugUI
             container.Add(sliderContainer);
             parent.Add(container);
         }
+        private void CreateSliderIntControl(VisualElement parent, DebugControlConfig config)
+        {
+            var container = new VisualElement();
+            container.AddToClassList("slider-container");
 
+            var label = new Label(config.displayName);
+
+            // Build tooltip text
+            string tooltipText = config.tooltip;
+            if (config.saveValue && enableSerialization)
+            {
+                label.text += " *";
+                if (!string.IsNullOrEmpty(tooltipText))
+                {
+                    tooltipText += " (Auto-saved)";
+                }
+                else
+                {
+                    tooltipText = "Auto-saved";
+                }
+            }
+
+            // Register tooltip for runtime
+            if (!string.IsNullOrEmpty(tooltipText))
+            {
+                RegisterTooltip(label, tooltipText);
+            }
+
+            container.Add(label);
+
+            var sliderContainer = new VisualElement();
+            sliderContainer.AddToClassList("slider-with-value");
+
+            var slider = new SliderInt();
+            slider.lowValue = (int)config.minValue;
+            slider.highValue = (int)config.maxValue;
+            slider.AddToClassList("slider");
+            slider.name = config.name;
+            slider.value = config.getter != null ? (int)config.getter() : (int)config.defaultValue;
+
+            var valueField = new FloatField();
+            valueField.name = config.name + "Field";
+            valueField.value = slider.value;
+            valueField.AddToClassList("value-field");
+
+            slider.RegisterValueChangedCallback(evt => {
+                valueField.SetValueWithoutNotify(evt.newValue);
+                config.setter?.Invoke(evt.newValue);
+
+                // Mark as changed instead of immediate save
+                if (enableSerialization && config.saveValue)
+                {
+                    MarkAsChanged();
+                }
+            });
+
+            valueField.RegisterValueChangedCallback(evt => {
+                float clampedValue = Mathf.Clamp(evt.newValue, config.minValue, config.maxValue);
+                valueField.SetValueWithoutNotify(clampedValue);
+                slider.SetValueWithoutNotify((int)clampedValue);
+                config.setter?.Invoke(clampedValue);
+
+                // Mark as changed instead of immediate save
+                if (enableSerialization && config.saveValue)
+                {
+                    MarkAsChanged();
+                }
+            });
+
+            sliderContainer.Add(slider);
+            sliderContainer.Add(valueField);
+            container.Add(sliderContainer);
+            parent.Add(container);
+        }
         private void CreateToggleControl(VisualElement parent, DebugControlConfig config)
         {
             var container = new VisualElement();
@@ -1329,7 +1404,7 @@ namespace RuntimeDebugUI
 
             var toggle = new Toggle(config.displayName);
             toggle.name = config.name;
-            toggle.value = config.boolGetter != null ? config.boolGetter() : config.defaultBoolValue;
+            toggle.value = config.getter != null ? (bool)config.getter() : (bool)config.defaultValue;
 
             // Build tooltip text
             string tooltipText = config.tooltip;
@@ -1353,7 +1428,7 @@ namespace RuntimeDebugUI
             }
 
             toggle.RegisterValueChangedCallback(evt => {
-                config.boolSetter?.Invoke(evt.newValue);
+                config.setter?.Invoke(evt.newValue);
 
                 // Mark as changed instead of immediate save
                 if (enableSerialization && config.saveValue)
@@ -1387,6 +1462,139 @@ namespace RuntimeDebugUI
             container.Add(valueLabel);
             parent.Add(container);
         }
+        public void CreateVectorControl(VisualElement parent, DebugControlConfig config)
+        {
+            var container = new VisualElement();
+            container.AddToClassList("vector-container");
+
+            var label = new Label(config.displayName);
+
+            // Tooltip logic
+            string tooltipText = config.tooltip;
+            if (config.saveValue && enableSerialization)
+            {
+                label.text += " *";
+                tooltipText = string.IsNullOrEmpty(tooltipText)
+                    ? "Auto-saved"
+                    : tooltipText + " (Auto-saved)";
+            }
+
+            if (!string.IsNullOrEmpty(tooltipText))
+                RegisterTooltip(label, tooltipText);
+
+            container.Add(label);
+
+            var vectorContainer = new VisualElement();
+            vectorContainer.AddToClassList("vector-inputs");
+
+            // Get the current value or default
+            object rawValue = config.getter?.Invoke() ?? config.defaultValue;
+            if (rawValue == null)
+                rawValue = Vector3.zero;
+
+            Type type = rawValue.GetType();
+            FloatField[] fields = null;
+            string[] labels = null;
+            float[] components = null;
+
+            // --- Determine type and extract data ---
+            if (type == typeof(Vector2))
+            {
+                var v = (Vector2)rawValue;
+                components = new[] { v.x, v.y };
+                labels = new[] { "X", "Y" };
+            }
+            else if (type == typeof(Vector3))
+            {
+                var v = (Vector3)rawValue;
+                components = new[] { v.x, v.y, v.z };
+                labels = new[] { "X", "Y", "Z" };
+            }
+            else if (type == typeof(Vector4))
+            {
+                var v = (Vector4)rawValue;
+                components = new[] { v.x, v.y, v.z, v.w };
+                labels = new[] { "X", "Y", "Z", "W" };
+            }
+            else if (type == typeof(Quaternion))
+            {
+                var q = (Quaternion)rawValue;
+                components = new[] { q.x, q.y, q.z, q.w };
+                labels = new[] { "X", "Y", "Z", "W" };
+            }
+            else if (type == typeof(Color))
+            {
+                var c = (Color)rawValue;
+                components = new[] { c.r, c.g, c.b, c.a };
+                labels = new[] { "R", "G", "B", "A" };
+            }
+            else
+            {
+                Debug.LogWarning($"Unsupported type for vector control: {type.Name}");
+                return;
+            }
+
+            fields = new FloatField[components.Length];
+
+            // --- For color preview (optional visual cue) ---
+            VisualElement colorPreview = null;
+            if (type == typeof(Color))
+            {
+                colorPreview = new VisualElement();
+                colorPreview.style.width = 24;
+                colorPreview.style.height = 24;
+                colorPreview.style.marginLeft = 6;
+                colorPreview.style.backgroundColor = new StyleColor((Color)rawValue);
+                colorPreview.style.borderTopLeftRadius = 4;
+                colorPreview.style.borderBottomLeftRadius = 4;
+                vectorContainer.Add(colorPreview);
+            }
+
+            // --- Create fields for each component ---
+            for (int i = 0; i < components.Length; i++)
+            {
+                var field = new FloatField(labels[i]);
+                field.value = components[i];
+                field.AddToClassList("vector-field");
+                int index = i; // capture for closure
+
+                field.RegisterValueChangedCallback(_ => UpdateValue());
+                vectorContainer.Add(field);
+                fields[i] = field;
+            }
+
+            container.Add(vectorContainer);
+            parent.Add(container);
+
+            // --- Update method ---
+            void UpdateValue()
+            {
+                object newValue;
+
+                if (type == typeof(Vector2))
+                    newValue = new Vector2(fields[0].value, fields[1].value);
+                else if (type == typeof(Vector3))
+                    newValue = new Vector3(fields[0].value, fields[1].value, fields[2].value);
+                else if (type == typeof(Vector4))
+                    newValue = new Vector4(fields[0].value, fields[1].value, fields[2].value, fields[3].value);
+                else if (type == typeof(Quaternion))
+                    newValue = new Quaternion(fields[0].value, fields[1].value, fields[2].value, fields[3].value);
+                else if (type == typeof(Color))
+                {
+                    var c = new Color(fields[0].value, fields[1].value, fields[2].value, fields[3].value);
+                    newValue = c;
+                    if (colorPreview != null)
+                        colorPreview.style.backgroundColor = new StyleColor(c);
+                }
+                else return;
+
+                config.setter?.Invoke(newValue);
+
+                if (enableSerialization && config.saveValue)
+                    MarkAsChanged();
+            }
+        }
+
         private void UpdateInfoDisplays()
         {
             foreach (var tabConfig in tabConfigs)
@@ -1396,9 +1604,9 @@ namespace RuntimeDebugUI
                     if (control.type == DebugControlConfig.ControlType.InfoDisplay)
                     {
                         var valueLabel = root.Q<Label>(control.name + "Value");
-                        if (valueLabel != null && control.stringGetter != null)
+                        if (valueLabel != null && control.getter != null)
                         {
-                            valueLabel.text = control.stringGetter();
+                            valueLabel.text = (string)control.getter();
                         }
                     }
                 }
@@ -1550,15 +1758,22 @@ namespace RuntimeDebugUI
                         case DebugControlConfig.ControlType.Slider:
                             if (control.getter != null)
                             {
-                                originalValues[key] = control.getter();
+                                if (control.wholeNumbers) originalValues[key] = (int)control.getter();
+                                else originalValues[key] = (float)Convert.ToDouble(control.getter());
                             }
                             break;
                         case DebugControlConfig.ControlType.Toggle:
-                            if (control.boolGetter != null)
+                            if (control.getter != null)
                             {
-                                originalBoolValues[key] = control.boolGetter();
+                                originalBoolValues[key] = (bool)control.getter();
                             }
                             break;
+                        case DebugControlConfig.ControlType.Vector3:
+                             if (control.getter != null)
+                             {
+                                originalVectorValues[key] = control.getter();
+                             }
+                             break;
                     }
                 }
             }
@@ -1600,7 +1815,7 @@ namespace RuntimeDebugUI
                             if (originalBoolValues.TryGetValue(key, out bool originalBoolValue))
                             {
                                 // Set the data value
-                                control.boolSetter?.Invoke(originalBoolValue);
+                                control.setter?.Invoke(originalBoolValue);
 
                                 // Update the UI element to reflect the reset value
                                 var toggle = root.Q<Toggle>(control.name);

@@ -263,7 +263,7 @@ The custom editor automatically appears when you select any DebugUI component in
 ```csharp
 new DebugControlConfig
 {
-    name = "JumpHeight",
+    name = "JumpHeight(float)",
     displayName = "Jump Height *",
     tooltip = "How high the player can jump",
     type = DebugControlConfig.ControlType.Slider,
@@ -271,7 +271,20 @@ new DebugControlConfig
     minValue = 0f,
     maxValue = 10f,
     getter = () => player.jumpHeight,
-    setter = (value) => player.jumpHeight = value
+    setter = (value) => player.jumpHeight = (float)value
+}
+new DebugControlConfig
+{
+    name = "JumpHeight(int)",
+    displayName = "Jump Height *",
+    tooltip = "How high the player can jump",
+    type = DebugControlConfig.ControlType.Slider,
+    saveValue = true,
+    minValue = 0f,
+    maxValue = 10f,
+    wholeNumbers = true
+    getter = () => player.jumpHeight,
+    setter = (value) => player.jumpHeight = System.Convert.ToInt32(value)
 }
 ```
 
@@ -284,8 +297,8 @@ new DebugControlConfig
     tooltip = "Player takes no damage",
     type = DebugControlConfig.ControlType.Toggle,
     saveValue = true,
-    boolGetter = () => player.isInvincible,
-    boolSetter = (value) => player.isInvincible = value
+    getter = () => player.isInvincible,
+    setter = (value) => player.isInvincible = (bool)value
 }
 ```
 
@@ -297,8 +310,22 @@ new DebugControlConfig
     displayName = "Position",
     tooltip = "Current player world position",
     type = DebugControlConfig.ControlType.InfoDisplay,
-    stringGetter = () => $"({player.transform.position.x:F1}, {player.transform.position.y:F1})"
+    getter = () => $"({player.transform.position.x:F1}, {player.transform.position.y:F1})"
 }
+```
+
+### Vector Control
+```csharp
+new DebugControlConfig
+{
+    name = "PlayerPos",
+    displayName = "Player Position",
+    tooltip = "Player's Position",
+    type = DebugControlConfig.ControlType.Vector,
+    defaultValue = Vector3.zero,
+    getter = () => player.transform.position,
+    setter = value => player.transform.position = (Vector3)value
+},
 ```
 
 ### Section Organization
@@ -433,7 +460,7 @@ public class PlayerDebugUI : DebugUI
                 minValue = 0f,
                 maxValue = 20f,
                 getter = () => player.moveSpeed,
-                setter = (value) => player.moveSpeed = value
+                setter = (value) => player.moveSpeed = (float)value
             },
             new DebugControlConfig
             {
@@ -446,7 +473,7 @@ public class PlayerDebugUI : DebugUI
                 minValue = 0f,
                 maxValue = 50f,
                 getter = () => player.acceleration,
-                setter = (value) => player.acceleration = value
+                setter = (value) => player.acceleration = (float)value
             }
         });
 
@@ -495,16 +522,14 @@ public class PlayerDebugUI : DebugUI
 | `name` | string | Unique identifier for the control |
 | `displayName` | string | Text shown in the UI (add * for saved controls) |
 | `tooltip` | string | Tooltip text (optional) |
-| `type` | ControlType | Slider, Toggle, or InfoDisplay |
+| `type` | ControlType | Slider, Toggle, InfoDisplay, Vector |
 | `sectionName` | string | Groups controls under section headers |
 | `saveValue` | bool | Whether to auto-save this control |
 | `minValue` | float | Minimum slider value |
 | `maxValue` | float | Maximum slider value |
-| `getter` | Func<float> | Function to get current value |
-| `setter` | Action<float> | Function to set new value |
-| `boolGetter` | Func<bool> | Function to get bool value (toggles) |
-| `boolSetter` | Action<bool> | Function to set bool value (toggles) |
-| `stringGetter` | Func<string> | Function to get display string (info) |
+| `wholeNumbers` | bool | Set slider to use SliderInt (2021.3+) |
+| `getter` | Func<object> | Function to get current value |
+| `setter` | Action<object> | Function to set new value |
 
 ### UI Configuration
 

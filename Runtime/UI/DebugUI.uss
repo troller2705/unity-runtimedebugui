@@ -517,3 +517,39 @@
 .save-status.saved {
     background-color: rgba(40, 167, 69, 0.9);
 }
+
+.vector-container {
+    margin-bottom: 10px;
+}
+
+.vector-inputs {
+    display: flex;
+    flex-direction: row;
+    background-color: rgba(30, 30, 30, 0.9);
+    align-items: center;
+    gap: 4px;
+}
+
+.vector-field {
+    flex: 1;
+    width: 100px;
+    min-width: 100px;
+    max-width: 100px;
+    background-color: rgba(30, 30, 30, 0.9);
+    border-color: rgba(100, 100, 100, 0.8);
+    border-width: 1px;
+    border-radius: 3px;
+}
+
+.vector-field .unity-base-text-field__input {
+    background-color: rgba(30, 30, 30, 0);
+    color: rgb(0, 220, 255);
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+    padding: 2px;
+    font-size: 10px;
+}
+
+.vector-field > .unity-base-field__label {
+    min-width: 12px;
+}

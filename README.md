@@ -496,7 +496,7 @@ public class PlayerDebugUI : DebugUI
                 displayName = "Position",
                 tooltip = "Current player world position",
                 type = DebugControlConfig.ControlType.InfoDisplay,
-                stringGetter = () => $"({player.transform.position.x:F1}, {player.transform.position.y:F1}, {player.transform.position.z:F1})"
+                getter = () => $"({player.transform.position.x:F1}, {player.transform.position.y:F1}, {player.transform.position.z:F1})"
             },
             new DebugControlConfig
             {
@@ -504,7 +504,7 @@ public class PlayerDebugUI : DebugUI
                 displayName = "Velocity",
                 tooltip = "Current player velocity",
                 type = DebugControlConfig.ControlType.InfoDisplay,
-                stringGetter = () => $"{player.velocity.magnitude:F1} m/s"
+                getter = () => $"{player.velocity.magnitude:F1} m/s"
             }
         });
 
@@ -691,5 +691,6 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 - **Discord:** [Cat Splat Studios Discord](https://discord.gg/MXcPNkBWxf)
 
 ---
+
 
 **Happy debugging!** 🎮✨

@@ -29,18 +29,21 @@ namespace RuntimeDebugUI
             Slider,
             Toggle,
             InfoDisplay,
-            Vector3
+            Vector
         }
 
         // Slider properties
         public float minValue;
         public float maxValue;
+        public Func<float> maxGetter;   // NEW
+        public Func<float> minGetter;   // NEW
         public bool wholeNumbers = false;
 
         // All control type properties
         public object defaultValue;
         public Func<object> getter;
         public Action<object> setter;
+        public bool autoRefresh = false;
     }
     [Serializable]
     public class DebugTabConfig
@@ -89,6 +92,13 @@ namespace RuntimeDebugUI
             TouchAndHold,    // Touch and hold for X seconds
             OnScreenButton   // Always visible toggle button
         }
+        public enum RefreshMode
+        {
+            autoRefreshEveryFrame,
+            autoRefreshOnInterval,
+            autoRefreshOnEvent,
+            manualRefresh
+        }
         #endregion
 
         #region Inspector Configuration
@@ -125,6 +135,11 @@ namespace RuntimeDebugUI
         [Header("Tooltip System")]
         [SerializeField] private float tooltipDelay = 0.5f; // Delay before showing tooltip
         [SerializeField] private Vector2 tooltipOffset = new Vector2(10, -10); // Offset from mouse position 
+
+        [Header("Refresh Configuration")]
+        [SerializeField] private RefreshMode refreshMode = RefreshMode.autoRefreshEveryFrame;
+        [SerializeField] private float refreshInterval = 0f;
+
         #endregion
 
         #region Private Fields
@@ -180,6 +195,19 @@ namespace RuntimeDebugUI
         private string currentTooltipText;
         private float tooltipTimer;
         private bool tooltipVisible = false;
+
+        // Refresh
+        // Cache of last-seen values so we only refresh dirty controls
+        private readonly Dictionary<string, object> dirtyCache = new Dictionary<string, object>();
+        private readonly Dictionary<string, float> dirtyMaxCache = new Dictionary<string, float>();
+        private readonly Dictionary<string, float> dirtyMinCache = new Dictionary<string, float>();
+        private Button refreshButton;
+        private float nextRefresh;
+
+        #endregion
+
+        #region Public Fields
+        public static event Action refresh;
         #endregion
 
         protected virtual void Start()
@@ -225,6 +253,7 @@ namespace RuntimeDebugUI
                 enabled = false;
                 return;
             }
+            if (refreshMode is RefreshMode.autoRefreshOnEvent) refresh += RefreshAllControls;
         }
         private void Update()
         {
@@ -245,6 +274,13 @@ namespace RuntimeDebugUI
             {
                 UpdateInfoDisplays();
                 UpdateTooltipSystem();
+                if (refreshMode is RefreshMode.autoRefreshEveryFrame) RefreshAllControls();
+                if (refreshMode is RefreshMode.autoRefreshOnInterval && refreshInterval > 0f && Time.time >= nextRefresh)
+                {
+                    RefreshAllControls();
+                    nextRefresh = Time.time + refreshInterval;
+                }
+
             }
 
             // Handle auto-save logic
@@ -260,6 +296,7 @@ namespace RuntimeDebugUI
             {
                 SaveValues();
             }
+            if (refreshMode is RefreshMode.autoRefreshOnEvent) refresh -= RefreshAllControls;
         }
 
         private void OnApplicationPause(bool pauseStatus)
@@ -949,6 +986,7 @@ namespace RuntimeDebugUI
                 footer.Insert(2, openFolderButton);
             }
         }
+
         private void OnSaveButtonClicked()
         {
             ForceSave();
@@ -1210,7 +1248,7 @@ namespace RuntimeDebugUI
                     case DebugControlConfig.ControlType.InfoDisplay:
                         CreateInfoControl(scrollView, control);
                         break;
-                    case DebugControlConfig.ControlType.Vector3:
+                    case DebugControlConfig.ControlType.Vector:
                         CreateVectorControl(scrollView, control);
                         break;
                 }
@@ -1357,8 +1395,10 @@ namespace RuntimeDebugUI
             sliderContainer.AddToClassList("slider-with-value");
 
             var slider = new SliderInt();
-            slider.lowValue = (int)config.minValue;
-            slider.highValue = (int)config.maxValue;
+            if (config.minGetter == null) slider.lowValue = (int)config.minValue;
+            else slider.lowValue = (int)config.minGetter();
+            if (config.maxGetter == null) slider.highValue = (int)config.maxValue;
+            else slider.highValue = (int)config.maxGetter();
             slider.AddToClassList("slider");
             slider.name = config.name;
             slider.value = config.getter != null ? (int)config.getter() : (int)config.defaultValue;
@@ -1612,6 +1652,273 @@ namespace RuntimeDebugUI
                 }
             }
         }
+
+        public void RefreshAllControls()
+        {
+            foreach (var tabConfig in tabConfigs)
+            {
+                foreach (var control in tabConfig.controls)
+                {
+                    if (control.getter == null)
+                        continue;
+
+                    if (!control.autoRefresh)
+                        continue;
+
+                    string key = $"{tabConfig.name}.{control.name}";
+
+                    // --------------------------
+                    // MAIN VALUE DIRTY CHECK
+                    // --------------------------
+
+                    object newValue = control.getter();
+
+                    if (dirtyCache.TryGetValue(key, out object oldValue))
+                    {
+                        if (ValuesEqual(oldValue, newValue))
+                        {
+                            // Only continue skipping *value* checks,
+                            // but range might need updating
+                        }
+                        else
+                        {
+                            // The main value changed → update UI
+                            RefreshControlUI(control, newValue);
+                            dirtyCache[key] = CloneValue(newValue);
+                        }
+                    }
+                    else
+                    {
+                        // First time adding
+                        RefreshControlUI(control, newValue);
+                        dirtyCache[key] = CloneValue(newValue);
+                    }
+
+                    // -------------------------------------
+                    // SLIDER RANGE DIRTY CHECK (min/max)
+                    // -------------------------------------
+                    if (control.type == DebugControlConfig.ControlType.Slider)
+                    {
+                        if (control.wholeNumbers) RefreshSliderIntRangeIfDirty(control, key);
+                        else RefreshSliderRangeIfDirty(control, key);
+                    }
+                }
+            }
+        }
+
+        private void RefreshSliderRangeIfDirty(DebugControlConfig control, string key)
+        {
+            float currentMin = control.minGetter != null ? control.minGetter() : control.minValue;
+            float currentMax = control.maxGetter != null ? control.maxGetter() : control.maxValue;
+
+
+            bool minDirty = false;
+            bool maxDirty = false;
+
+            if (dirtyMinCache.TryGetValue(key, out float oldMin))
+            {
+                if (!Mathf.Approximately(oldMin, currentMin))
+                    minDirty = true;
+            }
+            else minDirty = true; // not in cache yet
+
+            if (dirtyMaxCache.TryGetValue(key, out float oldMax))
+            {
+                if (!Mathf.Approximately(oldMax, currentMax))
+                    maxDirty = true;
+            }
+            else maxDirty = true;
+
+            // Nothing changed → skip
+            if (!minDirty && !maxDirty)
+                return;
+
+            // Update slider UI
+            var slider = root.Q<Slider>(control.name);
+
+            if (slider != null)
+            {
+                slider.lowValue = currentMin;
+                slider.highValue = currentMax;
+                //Debug.Log($"Slider min: {slider.lowValue}, max: {slider.highValue}");
+            }
+
+            // Update caches
+            dirtyMinCache[key] = currentMin;
+            dirtyMaxCache[key] = currentMax;
+        }
+
+        private void RefreshSliderIntRangeIfDirty(DebugControlConfig control, string key)
+        {
+            float currentMin = control.minGetter != null ? control.minGetter() : control.minValue;
+            float currentMax = control.maxGetter != null ? control.maxGetter() : control.maxValue;
+
+
+            bool minDirty = false;
+            bool maxDirty = false;
+
+            if (dirtyMinCache.TryGetValue(key, out float oldMin))
+            {
+                if (!Mathf.Approximately(oldMin, currentMin))
+                    minDirty = true;
+            }
+            else minDirty = true; // not in cache yet
+
+            if (dirtyMaxCache.TryGetValue(key, out float oldMax))
+            {
+                if (!Mathf.Approximately(oldMax, currentMax))
+                    maxDirty = true;
+            }
+            else maxDirty = true;
+
+            // Nothing changed → skip
+            if (!minDirty && !maxDirty)
+                return;
+
+            // Update slider UI
+            var slider = root.Q<SliderInt>(control.name);
+
+            if (slider != null)
+            {
+                slider.lowValue = (int)currentMin;
+                slider.highValue = (int)currentMax;
+                //Debug.Log($"{control.displayName} min: {slider.lowValue}, max: {slider.highValue}");
+            }
+
+            // Update caches
+            dirtyMinCache[key] = currentMin;
+            dirtyMaxCache[key] = currentMax;
+        }
+
+        private void RefreshControlUI(DebugControlConfig control, object value)
+        {
+            switch (control.type)
+            {
+                case DebugControlConfig.ControlType.Slider:
+                    {
+                        var slider = root.Q<Slider>(control.name);
+                        var field = root.Q<FloatField>(control.name + "Field");
+                        if (slider != null)
+                        {
+                            float v = (float)Convert.ToDouble(value);
+                            slider.SetValueWithoutNotify(v);
+                            field?.SetValueWithoutNotify(v);
+                        }
+                    }
+                    break;
+
+                case DebugControlConfig.ControlType.Toggle:
+                    {
+                        var toggle = root.Q<Toggle>(control.name);
+                        if (toggle != null)
+                            toggle.SetValueWithoutNotify((bool)value);
+                    }
+                    break;
+
+                case DebugControlConfig.ControlType.Vector:
+                    RefreshVectorUI(control, value);
+                    break;
+            }
+        }
+
+
+        private void RefreshVectorUI(DebugControlConfig config, object value)
+        {
+            float[] comps;
+            string[] labels;
+
+            if (value is Vector2 v2)
+            {
+                comps = new[] { v2.x, v2.y };
+                labels = new[] { "X", "Y" };
+            }
+            else if (value is Vector3 v3)
+            {
+                comps = new[] { v3.x, v3.y, v3.z };
+                labels = new[] { "X", "Y", "Z" };
+            }
+            else if (value is Vector4 v4)
+            {
+                comps = new[] { v4.x, v4.y, v4.z, v4.w };
+                labels = new[] { "X", "Y", "Z", "W" };
+            }
+            else if (value is Quaternion q)
+            {
+                comps = new[] { q.x, q.y, q.z, q.w };
+                labels = new[] { "X", "Y", "Z", "W" };
+            }
+            else if (value is Color c)
+            {
+                comps = new[] { c.r, c.g, c.b, c.a };
+                labels = new[] { "R", "G", "B", "A" };
+            }
+            else return;
+
+            for (int i = 0; i < comps.Length; i++)
+            {
+                var field = root.Q<FloatField>($"{config.name}_{labels[i]}");
+                if (field != null)
+                    field.SetValueWithoutNotify(comps[i]);
+            }
+        }
+
+        private bool ValuesEqual(object a, object b)
+        {
+            if (a == null || b == null)
+                return a == b;
+
+            if (a.GetType() != b.GetType())
+                return false;
+
+            switch (a)
+            {
+                case float fa when b is float fb:
+                    return Mathf.Approximately(fa, fb);
+
+                case int ia when b is int ib:
+                    return ia == ib;
+
+                case bool ba when b is bool bb:
+                    return ba == bb;
+
+                case Vector2 v2a when b is Vector2 v2b:
+                    return v2a == v2b;
+
+                case Vector3 v3a when b is Vector3 v3b:
+                    return v3a == v3b;
+
+                case Vector4 v4a when b is Vector4 v4b:
+                    return v4a == v4b;
+
+                case Quaternion qa when b is Quaternion qb:
+                    return qa.Equals(qb);
+
+                case Color ca when b is Color cb:
+                    return ca.Equals(cb);
+
+                default:
+                    return a.Equals(b);
+            }
+        }
+
+        private object CloneValue(object v)
+        {
+            switch (v)
+            {
+                case Vector2 vv: return vv;
+                case Vector3 vv: return vv;
+                case Vector4 vv: return vv;
+                case Quaternion q: return q;
+                case Color c: return c;
+                case float f: return f;
+                case int i: return i;
+                case bool b: return b;
+            }
+
+            return v; // fallback for safe types
+        }
+
+
         private void SetupEventHandlers()
         {
             // Close button
@@ -1633,6 +1940,25 @@ namespace RuntimeDebugUI
             {
                 AddSerializationButtons();
             }
+            if (refreshMode is RefreshMode.manualRefresh)
+            {
+                AddRefreshButton();
+            }
+        }
+        private void AddRefreshButton()
+        {
+            var footer = root.Q<VisualElement>("Footer");
+            if (footer == null) return;
+
+            // Create manual refresh button
+            refreshButton = new Button();
+            refreshButton.name = "refresh-button";
+            refreshButton.AddToClassList("footer-button");
+            refreshButton.text = "Refresh";
+
+            // Set up click handler
+            refreshButton.clicked += RefreshAllControls;
+            footer.Insert(0, refreshButton);
         }
         #endregion
 
@@ -1768,7 +2094,7 @@ namespace RuntimeDebugUI
                                 originalBoolValues[key] = (bool)control.getter();
                             }
                             break;
-                        case DebugControlConfig.ControlType.Vector3:
+                        case DebugControlConfig.ControlType.Vector:
                              if (control.getter != null)
                              {
                                 originalVectorValues[key] = control.getter();

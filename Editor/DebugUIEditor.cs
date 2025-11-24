@@ -1,6 +1,7 @@
 using UnityEditor;
 using UnityEngine;
 using static RuntimeDebugUI.DebugUI;
+using static UnityEngine.UI.CanvasScaler;
 
 namespace RuntimeDebugUI.Editor
 {
@@ -40,12 +41,17 @@ namespace RuntimeDebugUI.Editor
         private SerializedProperty tooltipDelay;
         private SerializedProperty tooltipOffset;
 
+        // Refresh Configuration
+        private SerializedProperty refreshMode;
+        private SerializedProperty refreshInterval;
+
         // Foldout states
         private bool showUIConfiguration = true;
         private bool showMobileSupport = true;
         private bool showSerialization = true;
         private bool showAutoSave = true;
         private bool showTooltipSystem = true;
+        private bool showRefreshConfiguration = true;
 
 
         private void OnEnable()
@@ -83,6 +89,10 @@ namespace RuntimeDebugUI.Editor
             // Tooltip System
             tooltipDelay = serializedObject.FindProperty("tooltipDelay");
             tooltipOffset = serializedObject.FindProperty("tooltipOffset");
+
+            // Refresh Configuration
+            refreshMode = serializedObject.FindProperty("refreshMode");
+            refreshInterval = serializedObject.FindProperty("refreshInterval");
         }
 
         public override void OnInspectorGUI()
@@ -290,10 +300,45 @@ namespace RuntimeDebugUI.Editor
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
 
+            // Refresh Configuration Section
+            showRefreshConfiguration = EditorGUILayout.BeginFoldoutHeaderGroup(showRefreshConfiguration, "Refresh Configuration");
+            if (showRefreshConfiguration)
+            {
+                EditorGUILayout.Space(5);
+                EditorGUILayout.PropertyField(refreshMode, new GUIContent("Refresh Mode", "What system to use for refreshing"));
+                RefreshMode refreshModeEnum = (RefreshMode)refreshMode.enumValueIndex;
+
+                EditorGUI.indentLevel++;
+                switch (refreshModeEnum)
+                {
+                    case RefreshMode.autoRefreshEveryFrame:
+                        EditorGUILayout.HelpBox("Refreshs every frame. May cause performance issues.", MessageType.Warning);
+                        break;
+
+                    case RefreshMode.autoRefreshOnEvent:
+                        EditorGUILayout.HelpBox($"Will refresh on DebugUI.refresh event call. Recommended for most use cases.", MessageType.Info);
+                        break;
+
+                    case RefreshMode.autoRefreshOnInterval:
+                        EditorGUILayout.PropertyField(refreshInterval, new GUIContent("Refresh Interval", "Maximum seconds between automatic refreshes (between 5-300)"));
+                        if (refreshInterval.floatValue < 5f) refreshInterval.floatValue = 5f;
+                        if (refreshInterval.floatValue > 300f) refreshInterval.floatValue = 300f;
+                        EditorGUILayout.HelpBox($"Will refresh every {refreshInterval.floatValue:F0} seconds.", MessageType.Info);
+                        break;
+
+                    case RefreshMode.manualRefresh:
+                        EditorGUILayout.HelpBox("Only refreshs on manual refresh button. Use for maximum control.", MessageType.Info);
+                        break;
+                }
+                EditorGUI.indentLevel--;
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+
             // Footer info
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("Runtime Debug UI v1.3.0", EditorStyles.centeredGreyMiniLabel);
             EditorGUILayout.LabelField("Created by Hisham Ata", EditorStyles.centeredGreyMiniLabel);
+            EditorGUILayout.LabelField("Contributions by Cole Groves", EditorStyles.centeredGreyMiniLabel);
             EditorGUILayout.LabelField("Configure tabs and controls in ConfigureTabs() method", EditorStyles.centeredGreyMiniLabel);
 
             serializedObject.ApplyModifiedProperties();

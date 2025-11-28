@@ -1598,6 +1598,9 @@ namespace RuntimeDebugUI
                 field.AddToClassList("vector-field");
                 int index = i; // capture for closure
 
+                // ⭐ REQUIRED FOR REFRESH TO WORK ⭐
+                field.name = $"{config.name}_{labels[i]}";
+
                 field.RegisterValueChangedCallback(_ => UpdateValue());
                 vectorContainer.Add(field);
                 fields[i] = field;
